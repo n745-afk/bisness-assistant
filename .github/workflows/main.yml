@@ -52,24 +52,20 @@ jobs:
           DAY="${{ steps.day_of_week.outputs.day }}"
           MESSAGE=""
           
-          # Если режим today или all — показываем задачи на сегодня
           if [ "$MODE" = "today" ] || [ "$MODE" = "all" ]; then
-            MESSAGE="*📅 ПЛАН НА $DAY*\\n\\n"
+            MESSAGE="📅 ПЛАН НА $DAY\n\n"
             
-            # Проверяем, есть ли задачи на этот день
             if jq -e ".\"$DAY\"" tasks.json > /dev/null 2>&1; then
               TASK_COUNT=$(jq ".\"$DAY\" | length" tasks.json)
               
               if [ "$TASK_COUNT" -gt 0 ]; then
-                MESSAGE="${MESSAGE}*Задачи на сегодня:*\\n"
+                MESSAGE="${MESSAGE}Задачи на сегодня:\n"
                 
-                # Читаем задачи
                 while IFS= read -r task_line; do
                   TIME=$(echo "$task_line" | jq -r '.time')
                   TASK=$(echo "$task_line" | jq -r '.task')
                   PRIORITY=$(echo "$task_line" | jq -r '.priority')
                   
-                  # Иконка приоритета
                   case $PRIORITY in
                     high) ICON="🔴" ;;
                     medium) ICON="🟡" ;;
@@ -77,44 +73,34 @@ jobs:
                     *) ICON="⚪" ;;
                   esac
                   
-                  MESSAGE="${MESSAGE}${ICON} ${TIME} — ${TASK}\\n"
+                  MESSAGE="${MESSAGE}${ICON} ${TIME} — ${TASK}\n"
                 done < <(jq -c ".\"$DAY\"[]" tasks.json)
               else
-                MESSAGE="${MESSAGE}✅ Задач на сегодня нет!\\n"
+                MESSAGE="${MESSAGE}✅ Задач на сегодня нет\n"
               fi
             else
-              MESSAGE="${MESSAGE}✅ Задач на сегодня нет!\\n"
+              MESSAGE="${MESSAGE}✅ Задач на сегодня нет\n"
             fi
           fi
           
-          # Если режим deadlines или all — показываем срочные дедлайны
           if [ "$MODE" = "deadlines" ] || [ "$MODE" = "all" ]; then
             TODAY_DAY=$(date +%d)
-            MESSAGE="${MESSAGE}\\n*⏰ БЛИЖАЙШИЕ ДЕДЛАЙНЫ:*\\n"
+            MESSAGE="${MESSAGE}\n⏰ БЛИЖАЙШИЕ ДЕДЛАЙНЫ:\n"
             
             DEADLINE_COUNT=0
             while IFS= read -r deadline_line; do
               DEADLINE_DATE=$(echo "$deadline_line" | jq -r '.date')
               DEADLINE_TASK=$(echo "$deadline_line" | jq -r '.task')
-              DEADLINE_PRIORITY=$(echo "$deadline_line" | jq -r '.priority')
               
-              # Считаем сколько дней осталось
               DAYS_LEFT=$((DEADLINE_DATE - TODAY_DAY))
               
               if [ $DAYS_LEFT -ge 0 ] && [ $DAYS_LEFT -le 7 ]; then
-                case $DEADLINE_PRIORITY in
-                  high) ICON="🔴" ;;
-                  medium) ICON="🟡" ;;
-                  low) ICON="🟢" ;;
-                  *) ICON="⚪" ;;
-                esac
-                
                 if [ $DAYS_LEFT -eq 0 ]; then
-                  MESSAGE="${MESSAGE}${ICON} СЕГОДНЯ: ${DEADLINE_TASK}\\n"
+                  MESSAGE="${MESSAGE}🔴 СЕГОДНЯ: ${DEADLINE_TASK}\n"
                 elif [ $DAYS_LEFT -eq 1 ]; then
-                  MESSAGE="${MESSAGE}${ICON} ЗАВТРА: ${DEADLINE_TASK}\\n"
+                  MESSAGE="${MESSAGE}🔴 ЗАВТРА: ${DEADLINE_TASK}\n"
                 else
-                  MESSAGE="${MESSAGE}${ICON} Через ${DAYS_LEFT} дн.: ${DEADLINE_TASK}\\n"
+                  MESSAGE="${MESSAGE}⚡ Через ${DAYS_LEFT} дн: ${DEADLINE_TASK}\n"
                 fi
                 
                 DEADLINE_COUNT=$((DEADLINE_COUNT + 1))
@@ -122,19 +108,17 @@ jobs:
             done < <(jq -c '.дедлайны[]' tasks.json)
             
             if [ $DEADLINE_COUNT -eq 0 ]; then
-              MESSAGE="${MESSAGE}✅ Срочных дедлайнов нет!\\n"
+              MESSAGE="${MESSAGE}✅ Срочных дедлайнов нет\n"
             fi
           fi
-          MESSAGE=$(echo "$MESSAGE" | sed 's/\./\\./g; s/\!/\\!/g; s/\(/\\(/g; s/\)/\\)/g; s/\[/\\[/g; s/\]/\\]/g; s/\*/\\*/g; s/_/\\_/g; s/`/\\`/g; s/{/\\{/g; s/}/\\}/g')
-          MESSAGE="${MESSAGE}\\n_Успешного рабочего дня\\! 💼_"
+          
+          MESSAGE="${MESSAGE}\nУспешного рабочего дня!"
           
           echo "text=$MESSAGE" >> $GITHUB_OUTPUT
       
       # 5. Отправляем в Telegram
       - name: Отправляем в Telegram
         run: |
-          TEXT="${{ steps.message.outputs.text }}"
-          
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-            -H "Content-Type: application/json" \
-            -d "{\"chat_id\":\"${{ secrets.TELEGRAM_CHAT_ID }}\",\"text\":\"$TEXT\",\"parse_mode\":\"MarkdownV2\"}"
+            -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d "text=${{ steps.message.outputs.text }}"

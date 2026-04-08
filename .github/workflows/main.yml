@@ -1,0 +1,138 @@
+name: Бизнес помощник
+
+on:
+  schedule:
+    # Каждый будний день в 9:00 UTC (12:00 MSK)
+    - cron: '0 9 * * 1-5'
+  workflow_dispatch:
+    # Ручной запуск
+    inputs:
+      mode:
+        description: 'Режим: today (сегодня), deadlines (дедлайны), all (всё)'
+        required: false
+        default: 'today'
+        type: choice
+        options:
+          - today
+          - deadlines
+          - all
+
+jobs:
+  send-notification:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. Загружаем код
+      - name: Загружаем код
+        uses: actions/checkout@v4
+      
+      # 2. Устанавливаем jq для работы с JSON
+      - name: Устанавливаем jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+      
+      # 3. Определяем текущий день недели
+      - name: Определяем день недели
+        id: day_of_week
+        run: |
+          DAY_NUM=$(date +%u)
+          case $DAY_NUM in
+            1) echo "day=понедельник" >> $GITHUB_OUTPUT ;;
+            2) echo "day=вторник" >> $GITHUB_OUTPUT ;;
+            3) echo "day=среда" >> $GITHUB_OUTPUT ;;
+            4) echo "day=четверг" >> $GITHUB_OUTPUT ;;
+            5) echo "day=пятница" >> $GITHUB_OUTPUT ;;
+            6) echo "day=суббота" >> $GITHUB_OUTPUT ;;
+            7) echo "day=воскресенье" >> $GITHUB_OUTPUT ;;
+          esac
+      
+      # 4. Генерируем сообщение
+      - name: Генерируем сообщение
+        id: message
+        run: |
+          MODE="${{ github.event.inputs.mode || 'today' }}"
+          DAY="${{ steps.day_of_week.outputs.day }}"
+          MESSAGE=""
+          
+          # Если режим today или all — показываем задачи на сегодня
+          if [ "$MODE" = "today" ] || [ "$MODE" = "all" ]; then
+            MESSAGE="*📅 ПЛАН НА $DAY*\\n\\n"
+            
+            # Проверяем, есть ли задачи на этот день
+            if jq -e ".\"$DAY\"" tasks.json > /dev/null 2>&1; then
+              TASK_COUNT=$(jq ".\"$DAY\" | length" tasks.json)
+              
+              if [ "$TASK_COUNT" -gt 0 ]; then
+                MESSAGE="${MESSAGE}*Задачи на сегодня:*\\n"
+                
+                # Читаем задачи
+                while IFS= read -r task_line; do
+                  TIME=$(echo "$task_line" | jq -r '.time')
+                  TASK=$(echo "$task_line" | jq -r '.task')
+                  PRIORITY=$(echo "$task_line" | jq -r '.priority')
+                  
+                  # Иконка приоритета
+                  case $PRIORITY in
+                    high) ICON="🔴" ;;
+                    medium) ICON="🟡" ;;
+                    low) ICON="🟢" ;;
+                    *) ICON="⚪" ;;
+                  esac
+                  
+                  MESSAGE="${MESSAGE}${ICON} ${TIME} — ${TASK}\\n"
+                done < <(jq -c ".\"$DAY\"[]" tasks.json)
+              else
+                MESSAGE="${MESSAGE}✅ Задач на сегодня нет!\\n"
+              fi
+            else
+              MESSAGE="${MESSAGE}✅ Задач на сегодня нет!\\n"
+            fi
+          fi
+          
+          # Если режим deadlines или all — показываем срочные дедлайны
+          if [ "$MODE" = "deadlines" ] || [ "$MODE" = "all" ]; then
+            TODAY_DAY=$(date +%d)
+            MESSAGE="${MESSAGE}\\n*⏰ БЛИЖАЙШИЕ ДЕДЛАЙНЫ:*\\n"
+            
+            DEADLINE_COUNT=0
+            while IFS= read -r deadline_line; do
+              DEADLINE_DATE=$(echo "$deadline_line" | jq -r '.date')
+              DEADLINE_TASK=$(echo "$deadline_line" | jq -r '.task')
+              DEADLINE_PRIORITY=$(echo "$deadline_line" | jq -r '.priority')
+              
+              # Считаем сколько дней осталось
+              DAYS_LEFT=$((DEADLINE_DATE - TODAY_DAY))
+              
+              if [ $DAYS_LEFT -ge 0 ] && [ $DAYS_LEFT -le 7 ]; then
+                case $DEADLINE_PRIORITY in
+                  high) ICON="🔴" ;;
+                  medium) ICON="🟡" ;;
+                  low) ICON="🟢" ;;
+                  *) ICON="⚪" ;;
+                esac
+                
+                if [ $DAYS_LEFT -eq 0 ]; then
+                  MESSAGE="${MESSAGE}${ICON} СЕГОДНЯ: ${DEADLINE_TASK}\\n"
+                elif [ $DAYS_LEFT -eq 1 ]; then
+                  MESSAGE="${MESSAGE}${ICON} ЗАВТРА: ${DEADLINE_TASK}\\n"
+                else
+                  MESSAGE="${MESSAGE}${ICON} Через ${DAYS_LEFT} дн.: ${DEADLINE_TASK}\\n"
+                fi
+                
+                DEADLINE_COUNT=$((DEADLINE_COUNT + 1))
+              fi
+            done < <(jq -c '.дедлайны[]' tasks.json)
+            
+            if [ $DEADLINE_COUNT -eq 0 ]; then
+              MESSAGE="${MESSAGE}✅ Срочных дедлайнов нет!\\n"
+            fi
+          fi
+          
+          MESSAGE="${MESSAGE}\\n_Успешного рабочего дня! 💼_"
+          
+          echo "text=$MESSAGE" >> $GITHUB_OUTPUT
+      
+      # 5. Отправляем в Telegram
+      - name: Отправляем в Telegram
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -H "Content-Type: application/json" \
+            -d "{\"chat_id\": \"${{ secrets.TELEGRAM_CHAT_ID }}\", \"text\": \"${{ steps.message.outputs.text }}\", \"parse_mode\": \"MarkdownV2\"}"

@@ -48,79 +48,32 @@ jobs:
       - name: Генерируем сообщение
         id: message
         run: |
-          MODE="${{ github.event.inputs.mode || 'today' }}"
           DAY="${{ steps.day_of_week.outputs.day }}"
           DAY_CAP="$(echo ${DAY:0:1} | tr 'a-z' 'A-Z')${DAY:1}"
           
-          # Создаём файл с правильными переносами
-          cat > message.txt << 'MSGEOF'
-         MSGEOF
-
-          if [ "$MODE" = "today" ] || [ "$MODE" = "all" ]; then
-            echo "📅 ПЛАН НА $DAY_CAP" >> message.txt
-            echo "" >> message.txt
-            echo "Задачи на сегодня:" >> message.txt
+          # Просто пишем сообщение построчно
+          {
+            echo "📅 ПЛАН НА $DAY_CAP"
+            echo ""
+            echo "Задачи на сегодня:"
             
             if jq -e ".\"$DAY\"" tasks.json > /dev/null 2>&1; then
-              while IFS= read -r task_line; do
-                TIME=$(echo "$task_line" | jq -r '.time')
-                TASK=$(echo "$task_line" | jq -r '.task')
-                PRIORITY=$(echo "$task_line" | jq -r '.priority')
-                
-                case $PRIORITY in
-                  high) ICON="🔴" ;;
-                  medium) ICON="🟡" ;;
-                  low) ICON="🟢" ;;
-                  *) ICON="⚪" ;;
-                esac
-                
-                echo "$ICON $TIME — $TASK" >> message.txt
-              done < <(jq -c ".\"$DAY\"[]" tasks.json)
+              jq -r ".\"$DAY\"[] | \"• \(.time) — \(.task)\"" tasks.json
             else
-              echo "✅ Задач на сегодня нет" >> message.txt
+              echo "✅ Задач нет"
             fi
-          fi
-          
-          if [ "$MODE" = "deadlines" ] || [ "$MODE" = "all" ]; then
-            echo "" >> message.txt
-            echo "⏰ БЛИЖАЙШИЕ ДЕДЛАЙНЫ:" >> message.txt
             
-            TODAY_DAY=$(date +%d)
-            DEADLINE_COUNT=0
-            
-            while IFS= read -r deadline_line; do
-              DEADLINE_DATE=$(echo "$deadline_line" | jq -r '.date')
-              DEADLINE_TASK=$(echo "$deadline_line" | jq -r '.task')
-              DAYS_LEFT=$((DEADLINE_DATE - TODAY_DAY))
-              
-              if [ $DAYS_LEFT -ge 0 ] && [ $DAYS_LEFT -le 7 ]; then
-                if [ $DAYS_LEFT -eq 0 ]; then
-                  echo "🔴 СЕГОДНЯ: $DEADLINE_TASK" >> message.txt
-                elif [ $DAYS_LEFT -eq 1 ]; then
-                  echo "🔴 ЗАВТРА: $DEADLINE_TASK" >> message.txt
-                else
-                  echo "⚡ Через $DAYS_LEFT дн: $DEADLINE_TASK" >> message.txt
-                fi
-                DEADLINE_COUNT=$((DEADLINE_COUNT + 1))
-              fi
-            done < <(jq -c '.дедлайны[]' tasks.json)
-            
-            if [ $DEADLINE_COUNT -eq 0 ]; then
-              echo "✅ Срочных дедлайнов нет" >> message.txt
-            fi
-          fi
+            echo ""
+            echo "Успешного дня!"
+          } > message.txt
           
-          echo "" >> message.txt
-          echo "Успешного рабочего дня! 💼" >> message.txt
-          
-          # Читаем файл и сохраняем
-          MESSAGE_CONTENT=$(cat message.txt)
-          echo "text<<MESSAGE_END" >> $GITHUB_OUTPUT
-          echo "$MESSAGE_CONTENT" >> $GITHUB_OUTPUT
-          echo "MESSAGE_END" >> $GITHUB_OUTPUT
+          # Сохраняем как multiline
+          echo 'text<<EOF' >> $GITHUB_OUTPUT
+          cat message.txt >> $GITHUB_OUTPUT  
+          echo 'EOF' >> $GITHUB_OUTPUT
 
       - name: Отправляем в Telegram
         run: |
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-            -H "Content-Type: application/json" \
-            -d "{\"chat_id\": \"${{ secrets.TELEGRAM_CHAT_ID }}\", \"text\": $(cat message.txt | jq -Rs .)}"
+            -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d "text=$(cat message.txt)"

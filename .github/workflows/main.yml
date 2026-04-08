@@ -44,40 +44,37 @@ jobs:
             7) echo "day=воскресенье" >> $GITHUB_OUTPUT ;;
           esac
       
-      # 4. Генерируем сообщение
+     # 4. Генерируем сообщение
       - name: Генерируем сообщение
         id: message
         run: |
           DAY="${{ steps.day_of_week.outputs.day }}"
           DAY_CAP="$(echo ${DAY:0:1} | tr 'a-z' 'A-Z')${DAY:1}"
           
-          # Создаём сообщение с реальными переносами строк
-          MESSAGE="📅 ПЛАН НА $DAY_CAP
-          $'\n'
-          Задачи на сегодня:"
-              
-              if jq -e ".\"$DAY\"" tasks.json > /dev/null 2>&1; then
-                while IFS= read -r task_line; do
-                  TIME=$(echo "$task_line" | jq -r '.time')
-                  TASK=$(echo "$task_line" | jq -r '.task')
-                  MESSAGE="$MESSAGE
-          $'\n'• $TIME — $TASK"
-                done < <(jq -c ".\"$DAY\"[]" tasks.json)
-              else
-                MESSAGE="$MESSAGE
-          $'\n'✅ Задач нет"
-              fi
-              
-              MESSAGE="$MESSAGE
-          $'\n'
-          Успешного рабочего дня! 💼"
-              
-              # Используем jq для правильного JSON encoding
-              echo "text=$(echo -e "$MESSAGE" | jq -Rs .)" >> $GITHUB_OUTPUT
+          # Используем printf для создания сообщения
+          {
+            printf "📅 ПЛАН НА %s\n\n" "$DAY_CAP"
+            printf "Задачи на сегодня:\n"
+            
+            if jq -e ".\"$DAY\"" tasks.json > /dev/null 2>&1; then
+              while IFS= read -r task_line; do
+                TIME=$(echo "$task_line" | jq -r '.time')
+                TASK=$(echo "$task_line" | jq -r '.task')
+                printf "• %s — %s\n" "$TIME" "$TASK"
+              done < <(jq -c ".\"$DAY\"[]" tasks.json)
+            else
+              printf "✅ Задач нет\n"
+            fi
+            
+            printf "\nУспешного рабочего дня! 💼\n"
+          } > message.txt
+          
+          # Кодируем в JSON для безопасной передачи
+          echo "text=$(jq -Rs . < message.txt)" >> $GITHUB_OUTPUT
 
+# 5. Отправляем в Telegram
       - name: Отправляем в Telegram
         run: |
-          # Просто вставляем уже закодированный JSON
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
             -H "Content-Type: application/json" \
             -d "{\"chat_id\":\"${{ secrets.TELEGRAM_CHAT_ID }}\",\"text\":${{ steps.message.outputs.text }}}"

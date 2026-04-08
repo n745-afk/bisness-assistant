@@ -51,29 +51,33 @@ jobs:
           DAY="${{ steps.day_of_week.outputs.day }}"
           DAY_CAP="$(echo ${DAY:0:1} | tr 'a-z' 'A-Z')${DAY:1}"
           
-          # Просто пишем сообщение построчно
-          {
-            echo "📅 ПЛАН НА $DAY_CAP"
-            echo ""
-            echo "Задачи на сегодня:"
-            
-            if jq -e ".\"$DAY\"" tasks.json > /dev/null 2>&1; then
-              jq -r ".\"$DAY\"[] | \"• \(.time) — \(.task)\"" tasks.json
-            else
-              echo "✅ Задач нет"
-            fi
-            
-            echo ""
-            echo "Успешного дня!"
-          } > message.txt
-          
-          # Сохраняем как multiline
-          echo 'text<<EOF' >> $GITHUB_OUTPUT
-          cat message.txt >> $GITHUB_OUTPUT  
-          echo 'EOF' >> $GITHUB_OUTPUT
+          # Создаём сообщение с реальными переносами строк
+          MESSAGE="📅 ПЛАН НА $DAY_CAP
+          $'\n'
+          Задачи на сегодня:"
+              
+              if jq -e ".\"$DAY\"" tasks.json > /dev/null 2>&1; then
+                while IFS= read -r task_line; do
+                  TIME=$(echo "$task_line" | jq -r '.time')
+                  TASK=$(echo "$task_line" | jq -r '.task')
+                  MESSAGE="$MESSAGE
+          $'\n'• $TIME — $TASK"
+                done < <(jq -c ".\"$DAY\"[]" tasks.json)
+              else
+                MESSAGE="$MESSAGE
+          $'\n'✅ Задач нет"
+              fi
+              
+              MESSAGE="$MESSAGE
+          $'\n'
+          Успешного рабочего дня! 💼"
+              
+              # Используем jq для правильного JSON encoding
+              echo "text=$(echo -e "$MESSAGE" | jq -Rs .)" >> $GITHUB_OUTPUT
 
       - name: Отправляем в Telegram
         run: |
+          # Просто вставляем уже закодированный JSON
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-            -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
-            -d "text=$(cat message.txt)"
+            -H "Content-Type: application/json" \
+            -d "{\"chat_id\":\"${{ secrets.TELEGRAM_CHAT_ID }}\",\"text\":${{ steps.message.outputs.text }}}"

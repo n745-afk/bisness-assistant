@@ -125,14 +125,17 @@ jobs:
               MESSAGE="${MESSAGE}✅ Срочных дедлайнов нет!\\n"
             fi
           fi
-          
-          MESSAGE="${MESSAGE}\\n_Успешного рабочего дня! 💼_"
+          MESSAGE=$(echo "$MESSAGE" | sed 's/\./\\./g; s/\!/\\!/g; s/\(/\\(/g; s/\)/\\)/g; s/\[/\\[/g; s/\]/\\]/g; s/\*/\\*/g; s/_/\\_/g; s/`/\\`/g; s/{/\\{/g; s/}/\\}/g')
+          MESSAGE="${MESSAGE}\\n_Успешного рабочего дня\\! 💼_"
           
           echo "text=$MESSAGE" >> $GITHUB_OUTPUT
       
       # 5. Отправляем в Telegram
       - name: Отправляем в Telegram
         run: |
+           # Экранируем специальные символы
+          TEXT="${{ steps.message.outputs.text }}"
+          TEXT=$(echo "$TEXT" | sed 's/\\/\\\\/g; s/\./\\./g; s/\!/\\!/g; s/\(/\\(/g; s/\)/\\)/g; s/\[/\\[/g; s/\]/\\]/g; s/\*/\\*/g; s/_/\\_/g; s/`/\\`/g; s/{/\\{/g; s/}/\\}/g')
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
             -H "Content-Type: application/json" \
             -d "{\"chat_id\": \"${{ secrets.TELEGRAM_CHAT_ID }}\", \"text\": \"${{ steps.message.outputs.text }}\", \"parse_mode\": \"MarkdownV2\"}"

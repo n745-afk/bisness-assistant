@@ -59,53 +59,65 @@ jobs:
           DAY="${{ steps.day_of_week.outputs.day }}"
           DAY_CAP="$(echo ${DAY:0:1} | tr 'a-z' 'A-Z')${DAY:1}"
           
-          # Создаём файл с сообщением используя printf
+          echo "DEBUG: Mode=$MODE, Day=$DAY, DayCap=$DAY_CAP"
+          
+          # Проверяем, существует ли tasks.json
+          if [ ! -f tasks.json ]; then
+            echo "ERROR: tasks.json не найден!"
+            exit 1
+          fi
+          
+          # Создаём сообщение
           {
-            printf "📅 *ПЛАН НА %s*\n\n" "$DAY_CAP"
-            printf "*Задачи на сегодня:*\n"
+            echo "📅 ПЛАН НА $DAY_CAP"
+            echo ""
+            echo "Задачи на сегодня:"
             
+            # Проверяем, есть ли данные для этого дня
             if jq -e ".\"$DAY\"" tasks.json > /dev/null 2>&1; then
-              TASK_COUNT=$(jq ".\"$DAY\" | length" tasks.json)
+              echo "DEBUG: Найден раздел '$DAY' в tasks.json"
               
-              if [ "$TASK_COUNT" -gt 0 ]; then
-                while IFS= read -r task_line; do
-                  TIME=$(echo "$task_line" | jq -r '.time')
-                  TASK=$(echo "$task_line" | jq -r '.task')
-                  PRIORITY=$(echo "$task_line" | jq -r '.priority')
-                  
-                  case $PRIORITY in
-                    high) ICON="🔴" ;;
-                    medium) ICON="🟡" ;;
-                    low) ICON="🟢" ;;
-                    *) ICON="⚪" ;;
-                  esac
-                  
-                  printf "%s %s — %s\n" "$ICON" "$TIME" "$TASK"
-                done < <(jq -c ".\"$DAY\"[]" tasks.json)
-              else
-                printf "✅ Задач на сегодня нет\n"
-              fi
+              while IFS= read -r task_line; do
+                TIME=$(echo "$task_line" | jq -r '.time')
+                TASK=$(echo "$task_line" | jq -r '.task')
+                echo "• $TIME — $TASK"
+              done < <(jq -c ".\"$DAY\"[]" tasks.json)
             else
-              printf "✅ Задач на сегодня нет\n"
+              echo "DEBUG: Раздел '$DAY' не найден, показываю все ключи:"
+              jq 'keys' tasks.json
+              echo "✅ Задач на сегодня нет"
             fi
             
-            printf "\n_Успешного рабочего дня! 💼_\n"
+            echo ""
+            echo "Успешного рабочего дня! 💼"
           } > message.txt
           
-          # Кодируем сообщение в JSON для безопасной передачи
-          echo "text=$(jq -Rs . < message.txt)" >> $GITHUB_OUTPUT
+          echo "DEBUG: Содержимое message.txt:"
+          cat message.txt
+          
+          # Проверяем, что файл не пустой
+          if [ ! -s message.txt ]; then
+            echo "ERROR: message.txt пустой!"
+            exit 1
+          fi
+          
+          # Сохраняем через heredoc для multiline
+          echo 'message_content<<EOF' >> $GITHUB_OUTPUT
+          cat message.txt >> $GITHUB_OUTPUT
+          echo 'EOF' >> $GITHUB_OUTPUT
+          
+          echo "DEBUG: message.txt сохранён в output"
 
       - name: Отправляем в Telegram
         run: |
+          echo "DEBUG: Полученное сообщение:"
+          echo "${{ steps.message.outputs.message_content }}"
+          
+          if [ -z "${{ steps.message.outputs.message_content }}" ]; then
+            echo "ERROR: Сообщение пустое!"
+            exit 1
+          fi
+          
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-            -H "Content-Type: application/json" \
-            -d "{\"chat_id\":\"${{ secrets.TELEGRAM_CHAT_ID }}\",\"text\":${{ steps.message.outputs.text }},\"parse_mode\":\"Markdown\"}"
-
-      - name: Сохраняем историю
-        run: |
-          echo "$(date '+%Y-%m-%d %H:%M:%S'): Запуск выполнен - ${{ steps.day_of_week.outputs.day }}" >> history.log
-          git config user.email "github-actions@github.com"
-          git config user.name "GitHub Actions"
-          git add history.log
-          git commit -m "Обновление истории $(date '+%Y-%m-%d')" || echo "Нет изменений"
-          git push || echo "Нечего пушить"
+            -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d "text=${{ steps.message.outputs.message_content }}"
